@@ -11,16 +11,9 @@ export interface User {
   last_login: string;
   profile_completed: boolean;
   subscription_type: 'free' | 'premium';
-}
-
-export interface AuthUser {
-  id: string;
-  email: string | undefined;
-  user_metadata?: {
-    full_name?: string;
-    name?: string;
-    avatar_url?: string;
-  };
+  email_confirmed: boolean;
+  total_credits_used: number;
+  last_credit_reset: string | null;
 }
 
 export interface AuthState {
@@ -29,13 +22,28 @@ export interface AuthState {
   initialized: boolean;
 }
 
-class AuthService {
+export interface CreditInfo {
+  credits: number;
+  maxCredits: number;
+  resetTime: string | null;
+  isGuest: boolean;
+  timeUntilReset?: string;
+}
+
+class AdvancedAuthService {
   private listeners: ((state: AuthState) => void)[] = [];
   private state: AuthState = {
     user: null,
     loading: true,
     initialized: false
   };
+
+  // Credit system constants
+  private readonly FREE_CREDITS = 5;
+  private readonly PREMIUM_CREDITS = 50;
+  private readonly GUEST_CREDIT_KEY = 'fresherhub_guest_credit';
+  private readonly GUEST_RESET_KEY = 'fresherhub_guest_reset';
+  private readonly CREDIT_RESET_HOURS = 3;
 
   constructor() {
     this.initialize();
@@ -62,15 +70,25 @@ class AuthService {
       supabase.auth.onAuthStateChange(async (event, session) => {
         console.log('Auth state changed:', event, session?.user?.email);
         
-        if (event === 'SIGNED_IN' && session?.user) {
-          await this.loadUserProfile(session.user.id);
-        } else if (event === 'SIGNED_OUT') {
-          this.setState({ user: null, loading: false, initialized: true });
-        } else if (event === 'TOKEN_REFRESHED' && session?.user) {
-          await this.loadUserProfile(session.user.id);
-        } else if (event === 'USER_UPDATED' && session?.user) {
-          // Handle user update - reload profile
-          await this.loadUserProfile(session.user.id);
+        switch (event) {
+          case 'SIGNED_IN':
+            if (session?.user) {
+              await this.loadUserProfile(session.user.id);
+            }
+            break;
+          case 'SIGNED_OUT':
+            this.setState({ user: null, loading: false, initialized: true });
+            break;
+          case 'TOKEN_REFRESHED':
+            if (session?.user) {
+              await this.loadUserProfile(session.user.id);
+            }
+            break;
+          case 'USER_UPDATED':
+            if (session?.user) {
+              await this.loadUserProfile(session.user.id);
+            }
+            break;
         }
       });
     } catch (error) {
@@ -81,7 +99,6 @@ class AuthService {
 
   private async loadUserProfile(userId: string) {
     try {
-      // First get the auth user
       const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
       
       if (authError || !authUser) {
@@ -90,7 +107,7 @@ class AuthService {
         return;
       }
 
-      // Try to get existing profile
+      // Get or create user profile
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
         .select('*')
@@ -99,7 +116,6 @@ class AuthService {
 
       if (profileError && profileError.code === 'PGRST116') {
         // Profile doesn't exist, create it
-        console.log('Creating new user profile for:', authUser.email);
         const newProfile = await this.createUserProfile(authUser);
         this.setState({ user: newProfile, loading: false, initialized: true });
       } else if (profile) {
@@ -124,12 +140,15 @@ class AuthService {
       email: authUser.email || '',
       name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || (authUser.email ? authUser.email.split('@')[0] : 'User'),
       avatar_url: authUser.user_metadata?.avatar_url || null,
-      credits: 5,
-      credits_reset_at: null, // No reset time until credits are exhausted
+      credits: this.FREE_CREDITS,
+      credits_reset_at: null,
       created_at: now,
       last_login: now,
       profile_completed: false,
-      subscription_type: 'free' as const
+      subscription_type: 'free' as const,
+      email_confirmed: !!authUser.email_confirmed_at,
+      total_credits_used: 0,
+      last_credit_reset: null
     };
 
     try {
@@ -141,8 +160,7 @@ class AuthService {
 
       if (error) {
         console.error('Error creating profile:', error);
-        // If profile already exists, try to fetch it
-        if (error.code === '23505') { // Unique constraint violation
+        if (error.code === '23505') {
           const { data: existingProfile } = await supabase
             .from('user_profiles')
             .select('*')
@@ -159,39 +177,28 @@ class AuthService {
       return data;
     } catch (error) {
       console.error('Profile creation failed:', error);
-      // Return a minimal profile object to prevent infinite loading
-      return {
-        id: authUser.id,
-        email: authUser.email || '',
-        name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || (authUser.email ? authUser.email.split('@')[0] : 'User'),
-        avatar_url: authUser.user_metadata?.avatar_url,
-        credits: 5,
-        credits_reset_at: null,
-        created_at: now,
-        last_login: now,
-        profile_completed: false,
-        subscription_type: 'free' as const
-      };
+      return profile as User;
     }
   }
 
   private async checkAndResetCredits(profile: User): Promise<User> {
     const now = new Date();
     
-    // Only check reset if credits are 0 and reset_at is set
+    // Check if credits need to be reset
     if (profile.credits === 0 && profile.credits_reset_at) {
       const resetTime = new Date(profile.credits_reset_at);
       
       if (now > resetTime) {
-        // Reset credits and clear reset time
-        const maxCredits = profile.subscription_type === 'premium' ? 50 : 5;
+        // Reset credits
+        const maxCredits = profile.subscription_type === 'premium' ? this.PREMIUM_CREDITS : this.FREE_CREDITS;
         
         const { data, error } = await supabase
           .from('user_profiles')
           .update({
             credits: maxCredits,
-            credits_reset_at: null, // Clear reset time
-            last_login: new Date().toISOString()
+            credits_reset_at: null,
+            last_credit_reset: now.toISOString(),
+            last_login: now.toISOString()
           })
           .eq('id', profile.id)
           .select()
@@ -209,7 +216,7 @@ class AuthService {
     // Just update last login
     const { data, error } = await supabase
       .from('user_profiles')
-      .update({ last_login: new Date().toISOString() })
+      .update({ last_login: now.toISOString() })
       .eq('id', profile.id)
       .select()
       .single();
@@ -219,13 +226,12 @@ class AuthService {
 
   private setState(newState: Partial<AuthState>) {
     this.state = { ...this.state, ...newState };
-    console.log('Auth state updated:', this.state);
     this.listeners.forEach(listener => listener(this.state));
   }
 
+  // Public methods
   subscribe(listener: (state: AuthState) => void) {
     this.listeners.push(listener);
-    // Immediately call with current state
     listener(this.state);
     
     return () => {
@@ -237,35 +243,10 @@ class AuthService {
     return this.state;
   }
 
-  // Check if email exists in our database
-  async checkEmailExists(email: string): Promise<{ exists: boolean; error?: any }> {
-    try {
-      const { error } = await supabase
-        .from('user_profiles')
-        .select('email')
-        .eq('email', email.toLowerCase().trim())
-        .single();
-      
-      if (error && error.code === 'PGRST116') {
-        // Email not found
-        return { exists: false };
-      }
-      
-      if (error) {
-        return { exists: false, error };
-      }
-      
-      return { exists: true };
-    } catch (error) {
-      return { exists: false, error };
-    }
-  }
-
   async signInWithEmail(email: string, password: string) {
     try {
       this.setState({ ...this.state, loading: true });
       
-      // Let Supabase handle the authentication directly
       const { data, error } = await supabase.auth.signInWithPassword({
         email: email.toLowerCase().trim(),
         password
@@ -274,7 +255,7 @@ class AuthService {
       if (error) {
         this.setState({ ...this.state, loading: false });
         
-        // Provide more specific error messages
+        // Enhanced error messages
         let userFriendlyMessage = 'Sign in failed. Please try again.';
         
         if (error.message?.includes('Invalid login credentials') || error.message?.includes('invalid_credentials')) {
@@ -287,26 +268,37 @@ class AuthService {
           userFriendlyMessage = 'No account found with this email. Please sign up first.';
         }
         
-        return { 
-          data: null, 
-          error: { ...error, message: userFriendlyMessage }
-        };
+        return { data: null, error: { ...error, message: userFriendlyMessage } };
       }
 
-      // Don't set loading to false here - let the auth state change handler do it
       return { data, error: null };
     } catch (error: any) {
       this.setState({ ...this.state, loading: false });
-      return { 
-        data: null, 
-        error: { message: 'An unexpected error occurred. Please try again.' }
-      };
+      return { data: null, error: { message: 'An unexpected error occurred. Please try again.' } };
     }
   }
 
   async signUpWithEmail(email: string, password: string, name: string) {
     try {
       this.setState({ ...this.state, loading: true });
+      
+      // First check if email already exists in our database
+      const { data: existingUser, error: checkError } = await supabase
+        .from('user_profiles')
+        .select('email')
+        .eq('email', email.toLowerCase().trim())
+        .single();
+      
+      if (existingUser) {
+        this.setState({ ...this.state, loading: false });
+        return { 
+          data: null, 
+          error: { 
+            message: 'An account with this email already exists. Please sign in instead.',
+            code: 'EMAIL_ALREADY_EXISTS'
+          }
+        };
+      }
       
       const { data, error } = await supabase.auth.signUp({
         email: email.toLowerCase().trim(),
@@ -323,7 +315,6 @@ class AuthService {
       if (error) {
         this.setState({ ...this.state, loading: false });
         
-        // Provide more specific error messages
         let userFriendlyMessage = 'Sign up failed. Please try again.';
         
         if (error.message?.includes('Password should be at least')) {
@@ -332,77 +323,30 @@ class AuthService {
           userFriendlyMessage = 'Please enter a valid email address.';
         } else if (error.message?.includes('User already registered') || error.message?.includes('already been registered')) {
           userFriendlyMessage = 'An account with this email already exists. Please sign in instead.';
-        } else if (error.message?.includes('Unable to validate email')) {
-          userFriendlyMessage = 'Unable to validate email. Please check the format and try again.';
+          return { 
+            data: null, 
+            error: { 
+              message: userFriendlyMessage,
+              code: 'EMAIL_ALREADY_EXISTS'
+            }
+          };
         }
         
-        return { 
-          data: null, 
-          error: { ...error, message: userFriendlyMessage }
-        };
+        return { data: null, error: { ...error, message: userFriendlyMessage } };
       }
 
-      // Always require email confirmation
       this.setState({ ...this.state, loading: false });
-      
       return { data, error: null };
     } catch (error: any) {
       this.setState({ ...this.state, loading: false });
-      return { 
-        data: null, 
-        error: { message: 'An unexpected error occurred. Please try again.' }
-      };
-    }
-  }
-
-  async signInWithGoogle() {
-    try {
-      this.setState({ ...this.state, loading: true });
-      
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: `${window.location.origin}`,
-          queryParams: {
-            access_type: 'offline',
-            prompt: 'consent',
-          }
-        }
-      });
-
-      if (error) {
-        this.setState({ ...this.state, loading: false });
-        return { data: null, error };
-      }
-
-      return { data, error: null };
-    } catch (error: any) {
-      this.setState({ ...this.state, loading: false });
-      return { data: null, error };
-    }
-  }
-
-  async signOut() {
-    try {
-      // Immediately clear state for instant UI update
-      this.setState({ user: null, loading: false, initialized: true });
-      
-      // DON'T clear guest credits on logout - they should persist
-      // localStorage.removeItem('guest_credit_used'); // REMOVED
-      
-      // Sign out from Supabase in background
-      supabase.auth.signOut().catch(console.error);
-      
-      return { error: null };
-    } catch (error: any) {
-      return { error };
+      return { data: null, error: { message: 'An unexpected error occurred. Please try again.' } };
     }
   }
 
   async resetPassword(email: string) {
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/auth/reset-password`
+        redirectTo: `${window.location.origin}/reset-password`
       });
 
       if (error) {
@@ -415,23 +359,13 @@ class AuthService {
     }
   }
 
-  async updateProfile(updates: Partial<Pick<User, 'name' | 'avatar_url'>>) {
-    if (!this.state.user) throw new Error('No user logged in');
-
+  async signOut() {
     try {
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .update(updates)
-        .eq('id', this.state.user.id)
-        .select()
-        .single();
-
-      if (error) throw error;
-      
-      this.setState({ user: data });
-      return { data, error: null };
+      this.setState({ user: null, loading: false, initialized: true });
+      supabase.auth.signOut().catch(console.error);
+      return { error: null };
     } catch (error: any) {
-      return { data: null, error };
+      return { error };
     }
   }
 
@@ -443,11 +377,14 @@ class AuthService {
 
     try {
       const newCredits = user.credits - 1;
-      const updateData: any = { credits: newCredits };
+      const updateData: any = { 
+        credits: newCredits,
+        total_credits_used: user.total_credits_used + 1
+      };
       
-      // If this is the last credit, set reset timer
+      // If this is the last credit, set reset timer (ChatGPT-like behavior)
       if (newCredits === 0) {
-        updateData.credits_reset_at = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+        updateData.credits_reset_at = new Date(Date.now() + this.CREDIT_RESET_HOURS * 60 * 60 * 1000).toISOString();
       }
 
       const { data, error } = await supabase
@@ -470,8 +407,9 @@ class AuthService {
     }
   }
 
+  // Guest credit system
   getGuestCredits(): number {
-    const lastUsed = localStorage.getItem('guest_credit_used');
+    const lastUsed = localStorage.getItem(this.GUEST_CREDIT_KEY);
     if (!lastUsed) return 1;
 
     const lastUsedTime = new Date(lastUsed);
@@ -479,8 +417,9 @@ class AuthService {
     const timeDiff = now.getTime() - lastUsedTime.getTime();
     const hoursDiff = timeDiff / (1000 * 60 * 60);
 
-    if (hoursDiff >= 3) {
-      localStorage.removeItem('guest_credit_used');
+    if (hoursDiff >= this.CREDIT_RESET_HOURS) {
+      localStorage.removeItem(this.GUEST_CREDIT_KEY);
+      localStorage.removeItem(this.GUEST_RESET_KEY);
       return 1;
     }
 
@@ -490,33 +429,73 @@ class AuthService {
   useGuestCredit(): boolean {
     const credits = this.getGuestCredits();
     if (credits > 0) {
-      localStorage.setItem('guest_credit_used', new Date().toISOString());
+      const now = new Date();
+      localStorage.setItem(this.GUEST_CREDIT_KEY, now.toISOString());
+      localStorage.setItem(this.GUEST_RESET_KEY, new Date(now.getTime() + this.CREDIT_RESET_HOURS * 60 * 60 * 1000).toISOString());
       return true;
     }
     return false;
   }
 
-  hasCredits(): boolean {
+  getCreditsInfo(): CreditInfo {
     if (this.state.user) {
-      return this.state.user.credits > 0;
-    }
-    return this.getGuestCredits() > 0;
-  }
-
-  getCreditsInfo(): { credits: number; isGuest: boolean; resetTime?: string } {
-    if (this.state.user) {
+      const user = this.state.user;
+      const maxCredits = user.subscription_type === 'premium' ? this.PREMIUM_CREDITS : this.FREE_CREDITS;
+      
+      let timeUntilReset: string | undefined;
+      if (user.credits_reset_at) {
+        const resetTime = new Date(user.credits_reset_at);
+        const now = new Date();
+        const timeDiff = resetTime.getTime() - now.getTime();
+        
+        if (timeDiff > 0) {
+          const hours = Math.floor(timeDiff / (1000 * 60 * 60));
+          const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
+          timeUntilReset = `${hours}h ${minutes}m`;
+        }
+      }
+      
       return {
-        credits: this.state.user.credits,
+        credits: user.credits,
+        maxCredits,
+        resetTime: user.credits_reset_at,
         isGuest: false,
-        resetTime: this.state.user.credits_reset_at || undefined
+        timeUntilReset
       };
     }
     
+    // Guest user
+    const guestCredits = this.getGuestCredits();
+    let timeUntilReset: string | undefined;
+    
+    if (guestCredits === 0) {
+      const resetTime = localStorage.getItem(this.GUEST_RESET_KEY);
+      if (resetTime) {
+        const resetDate = new Date(resetTime);
+        const now = new Date();
+        const timeDiff = resetDate.getTime() - now.getTime();
+        
+        if (timeDiff > 0) {
+          const hours = Math.floor(timeDiff / (1000 * 60 * 60));
+          const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
+          timeUntilReset = `${hours}h ${minutes}m`;
+        }
+      }
+    }
+    
     return {
-      credits: this.getGuestCredits(),
-      isGuest: true
+      credits: guestCredits,
+      maxCredits: 1,
+      resetTime: localStorage.getItem(this.GUEST_RESET_KEY),
+      isGuest: true,
+      timeUntilReset
     };
+  }
+
+  canUseCredit(): boolean {
+    const creditsInfo = this.getCreditsInfo();
+    return creditsInfo.credits > 0;
   }
 }
 
-export const authService = new AuthService();
+export const advancedAuthService = new AdvancedAuthService();

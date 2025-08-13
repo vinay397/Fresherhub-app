@@ -12,8 +12,8 @@ import {
   Crown,
   Zap
 } from 'lucide-react';
-import { useAuth } from '../hooks/useAuth';
-import AuthModal from './auth/AuthModal';
+import { useAdvancedAuth } from '../hooks/useAdvancedAuth';
+import AuthContainer from './auth/AuthContainer';
 
 interface NavigationProps {
   onNavigate: (tab: 'home' | 'jobs' | 'ats' | 'cover' | 'salary') => void;
@@ -21,8 +21,9 @@ interface NavigationProps {
 }
 
 const Navigation: React.FC<NavigationProps> = ({ onNavigate, currentTab }) => {
-  const { user, isAuthenticated, signOut } = useAuth();
+  const { user, isAuthenticated, signOut, getCreditsInfo, isPremium } = useAdvancedAuth();
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const creditsInfo = getCreditsInfo();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showAIToolsDropdown, setShowAIToolsDropdown] = useState(false);
 
@@ -183,7 +184,8 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, currentTab }) => {
                         </div>
                         <div className="text-sm text-gray-600">{user.email}</div>
                         <div className="text-xs text-gray-500 mt-1">
-                          {user.credits}/5 AI Credits • Resets every 3h
+                          {user.credits}/{isPremium() ? 50 : 5} AI Credits
+                          {creditsInfo.timeUntilReset && ` • Resets in ${creditsInfo.timeUntilReset}`}
                         </div>
                       </div>
                       
@@ -270,7 +272,7 @@ const Navigation: React.FC<NavigationProps> = ({ onNavigate, currentTab }) => {
         />
       )}
 
-      <AuthModal
+      <AuthContainer
         isOpen={showAuthModal}
         onClose={() => setShowAuthModal(false)}
         onSuccess={handleAuthSuccess}

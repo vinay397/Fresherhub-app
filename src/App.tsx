@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useAuth } from './hooks/useAuth';
+import React, { useState, useEffect } from 'react';
+import { useAdvancedAuth } from './hooks/useAdvancedAuth';
 import Navigation from './components/Navigation';
 import Homepage from './components/Homepage';
 import JobBoard from './components/JobBoard';
@@ -7,11 +7,19 @@ import ATSAnalyzer from './components/ATSAnalyzer';
 import CoverLetterGenerator from './components/CoverLetterGenerator';
 import SalaryCalculator from './components/SalaryCalculator';
 import Footer from './components/Footer';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 
 function App() {
   const [activeTab, setActiveTab] = useState<'home' | 'jobs' | 'ats' | 'cover' | 'salary'>('home');
   const [searchParams, setSearchParams] = useState<{ query?: string; location?: string }>({});
-  const { loading, initialized } = useAuth();
+  const { loading, initialized } = useAdvancedAuth();
+  const [isResetPasswordPage, setIsResetPasswordPage] = useState(false);
+
+  useEffect(() => {
+    // Check if current URL is reset password page
+    const path = window.location.pathname;
+    setIsResetPasswordPage(path === '/reset-password');
+  }, []);
 
   const handleNavigate = (tab: 'home' | 'jobs' | 'ats' | 'cover' | 'salary', params?: { query?: string; location?: string }) => {
     setActiveTab(tab);
@@ -21,6 +29,11 @@ function App() {
       setSearchParams({});
     }
   };
+
+  // Show reset password page if URL matches
+  if (isResetPasswordPage) {
+    return <ResetPasswordPage />;
+  }
 
   if (!initialized || loading) {
     return (

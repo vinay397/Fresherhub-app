@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Mail, FileText, Download, Brain, Sparkles, User, Building, CheckCircle, Wand2, Upload, X } from 'lucide-react';
-import CreditDisplay from './CreditDisplay';
+import AdvancedCreditDisplay from './auth/AdvancedCreditDisplay';
 import { geminiService } from '../services/geminiService';
-import { useAuth } from '../hooks/useAuth';
+import { useAdvancedAuth } from '../hooks/useAdvancedAuth';
 
 interface CoverLetterData {
   resumeText: string;
@@ -36,7 +36,7 @@ const CoverLetterGenerator: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [aiAvailable, setAiAvailable] = useState(false);
   const [customPrompt, setCustomPrompt] = useState('');
-  const { user, useCredit } = useAuth();
+  const { user, useCredit, canUseCredit, getCreditsInfo } = useAdvancedAuth();
   const [showPreview, setShowPreview] = useState(false);
   const [previewType, setPreviewType] = useState<'cover' | 'email'>('cover');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -122,21 +122,31 @@ const CoverLetterGenerator: React.FC = () => {
       return;
     }
 
-    // Allow guest users to use free credit
-    if (user) {
-      const success = await useCredit();
-      if (!success) {
-        alert('❌ No credits remaining.');
-        return;
+    // Check credits first
+    if (!canUseCredit()) {
+      const creditsInfo = getCreditsInfo();
+      
+      if (creditsInfo.isGuest) {
+        if (creditsInfo.timeUntilReset) {
+          alert(`❌ Free credit used. Resets in ${creditsInfo.timeUntilReset}. Sign in to get 5 credits!`);
+        } else {
+          alert('❌ No free credits. Sign in to get 5 credits!');
+        }
+      } else {
+        if (creditsInfo.timeUntilReset) {
+          alert(`❌ No credits remaining. Resets in ${creditsInfo.timeUntilReset}.`);
+        } else {
+          alert('❌ No credits remaining. Credits reset 3 hours after exhaustion.');
+        }
       }
-    } else {
-      // Guest user - allow one free usage
-      const guestUsed = localStorage.getItem('fresherhub_guest_used');
-      if (guestUsed) {
-        alert('❌ Free credit already used. Sign in to get 5 credits!');
-        return;
-      }
-      localStorage.setItem('fresherhub_guest_used', 'true');
+      return;
+    }
+
+    // Use credit
+    const success = await useCredit();
+    if (!success) {
+      alert('❌ Failed to use credit. Please try again.');
+      return;
     }
 
     setLoading(true);
@@ -314,7 +324,7 @@ const CoverLetterGenerator: React.FC = () => {
       </div>
 
       {/* Credit Display */}
-      <CreditDisplay />
+      <AdvancedCreditDisplay />
 
       {/* Input Form */}
       {!generatedContent && (

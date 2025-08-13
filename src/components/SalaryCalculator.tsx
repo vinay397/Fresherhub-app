@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { DollarSign, MapPin, Clock, Briefcase, TrendingUp, Brain, Calculator, Sparkles, Target, Building, GraduationCap, Award } from 'lucide-react';
-import CreditDisplay from './CreditDisplay';
+import AdvancedCreditDisplay from './auth/AdvancedCreditDisplay';
 import { geminiService } from '../services/geminiService';
-import { useAuth } from '../hooks/useAuth';
+import { useAdvancedAuth } from '../hooks/useAdvancedAuth';
 
 interface SalaryData {
   jobRole: string;
@@ -51,7 +51,7 @@ const SalaryCalculator: React.FC = () => {
   const [result, setResult] = useState<SalaryResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [aiAvailable, setAiAvailable] = useState(false);
-  const { user, useCredit } = useAuth();
+  const { user, useCredit, canUseCredit, getCreditsInfo } = useAdvancedAuth();
 
   const experienceLevels = [
     'Fresher',
@@ -121,21 +121,31 @@ const SalaryCalculator: React.FC = () => {
       return;
     }
 
-    // Allow guest users to use free credit
-    if (user) {
-      const success = await useCredit();
-      if (!success) {
-        alert('❌ No credits remaining.');
-        return;
+    // Check credits first
+    if (!canUseCredit()) {
+      const creditsInfo = getCreditsInfo();
+      
+      if (creditsInfo.isGuest) {
+        if (creditsInfo.timeUntilReset) {
+          alert(`❌ Free credit used. Resets in ${creditsInfo.timeUntilReset}. Sign in to get 5 credits!`);
+        } else {
+          alert('❌ No free credits. Sign in to get 5 credits!');
+        }
+      } else {
+        if (creditsInfo.timeUntilReset) {
+          alert(`❌ No credits remaining. Resets in ${creditsInfo.timeUntilReset}.`);
+        } else {
+          alert('❌ No credits remaining. Credits reset 3 hours after exhaustion.');
+        }
       }
-    } else {
-      // Guest user - allow one free usage
-      const guestUsed = localStorage.getItem('fresherhub_guest_used');
-      if (guestUsed) {
-        alert('❌ Free credit already used. Sign in to get 5 credits!');
-        return;
-      }
-      localStorage.setItem('fresherhub_guest_used', 'true');
+      return;
+    }
+
+    // Use credit
+    const success = await useCredit();
+    if (!success) {
+      alert('❌ Failed to use credit. Please try again.');
+      return;
     }
 
     setLoading(true);
@@ -195,7 +205,7 @@ const SalaryCalculator: React.FC = () => {
       </div>
 
       {/* Credit Display */}
-      <CreditDisplay />
+      <AdvancedCreditDisplay />
 
       {/* Calculator Form */}
       <div className="bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden">
