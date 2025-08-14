@@ -16,7 +16,7 @@ const ATSAnalyzer: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [aiAvailable, setAiAvailable] = useState(false);
   const [customPrompt, setCustomPrompt] = useState('');
-  const { user, useCredit, canUseCredit, getCreditsInfo } = useAdvancedAuth();
+  const { user, useCredit, canUseCredit, getCreditsInfo, testDatabaseConnection } = useAdvancedAuth();
   
   useEffect(() => {
     checkAiAvailability();
@@ -28,7 +28,9 @@ const ATSAnalyzer: React.FC = () => {
   };
 
   const handleAnalyze = async () => {
-    console.log('🔥 Button clicked! Starting analysis...');
+    console.log('🔥 ATS Analyze button clicked! Starting analysis...');
+    console.log('User:', user);
+    console.log('Can use credit:', canUseCredit());
     let finalResumeText = resumeText;
 
     // If file is uploaded, try to extract text from it
@@ -53,10 +55,16 @@ const ATSAnalyzer: React.FC = () => {
       return;
     }
 
-    // Check credits first
-    if (!canUseCredit()) {
-      const creditsInfo = getCreditsInfo();
-      
+    // Check and use credit
+    const creditsInfo = getCreditsInfo();
+    console.log('Credits info:', creditsInfo);
+    console.log('Credits available:', creditsInfo.credits);
+    
+    // Test database connection
+    const dbTest = await testDatabaseConnection();
+    console.log('Database connection test:', dbTest);
+    
+    if (creditsInfo.credits <= 0) {
       if (creditsInfo.isGuest) {
         if (creditsInfo.timeUntilReset) {
           alert(`❌ Free credit used. Resets in ${creditsInfo.timeUntilReset}. Sign in to get 5 credits!`);
@@ -67,7 +75,7 @@ const ATSAnalyzer: React.FC = () => {
         if (creditsInfo.timeUntilReset) {
           alert(`❌ No credits remaining. Resets in ${creditsInfo.timeUntilReset}.`);
         } else {
-          alert('❌ No credits remaining. Credits reset 3 hours after exhaustion.');
+          alert('❌ No credits remaining. Credits reset 24 hours after exhaustion.');
         }
       }
       return;
@@ -79,6 +87,8 @@ const ATSAnalyzer: React.FC = () => {
       alert('❌ Failed to use credit. Please try again.');
       return;
     }
+    
+    console.log('Credit used successfully');
 
     setLoading(true);
     
@@ -249,11 +259,13 @@ Requirements:
 
         <div className="mt-8 flex justify-center">
           <button
-            onClick={() => {
-              console.log('Button clicked!');
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              console.log('ATS Analyze button clicked!');
               handleAnalyze();
             }}
-            disabled={loading || !jobDescription}
+            disabled={loading}
             className="px-12 py-4 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-2xl hover:from-purple-700 hover:to-blue-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed transition-all duration-300 flex items-center space-x-3 shadow-xl hover:shadow-2xl transform hover:scale-105 disabled:transform-none text-lg font-semibold"
           >
             {loading ? (

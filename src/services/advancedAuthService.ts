@@ -43,7 +43,7 @@ class AdvancedAuthService {
   private readonly PREMIUM_CREDITS = 50;
   private readonly GUEST_CREDIT_KEY = 'fresherhub_guest_credit';
   private readonly GUEST_RESET_KEY = 'fresherhub_guest_reset';
-  private readonly CREDIT_RESET_HOURS = 3;
+  private readonly CREDIT_RESET_HOURS = 24;
 
   constructor() {
     this.initialize();
@@ -183,14 +183,21 @@ class AdvancedAuthService {
 
   private async checkAndResetCredits(profile: User): Promise<User> {
     const now = new Date();
+    console.log('🔍 Checking credits for user:', profile.id);
+    console.log('Current credits:', profile.credits);
+    console.log('Reset time:', profile.credits_reset_at);
     
-    // Check if credits need to be reset
-    if (profile.credits === 0 && profile.credits_reset_at) {
+    // Check if there's a reset timer and if it has expired
+    if (profile.credits_reset_at) {
       const resetTime = new Date(profile.credits_reset_at);
+      console.log('Reset time parsed:', resetTime);
+      console.log('Current time:', now);
+      console.log('Time until reset (ms):', resetTime.getTime() - now.getTime());
       
-      if (now > resetTime) {
-        // Reset credits
+      if (now >= resetTime) {
+        // Reset timer has expired, restore credits
         const maxCredits = profile.subscription_type === 'premium' ? this.PREMIUM_CREDITS : this.FREE_CREDITS;
+        console.log('✅ Reset timer expired, restoring credits to:', maxCredits);
         
         const { data, error } = await supabase
           .from('user_profiles')
@@ -205,15 +212,40 @@ class AdvancedAuthService {
           .single();
 
         if (error) {
-          console.error('Error resetting credits:', error);
+          console.error('❌ Error resetting credits:', error);
           return profile;
         }
 
+        console.log('✅ Credits reset successfully:', data);
         return data;
+      } else {
+        // Reset timer is still active, user should have 0 credits
+        console.log('⏰ Reset timer still active, enforcing 0 credits');
+        if (profile.credits > 0) {
+          // Fix inconsistent state - user shouldn't have credits during reset period
+          console.log('🔧 Fixing inconsistent state - setting credits to 0');
+          const { data, error } = await supabase
+            .from('user_profiles')
+            .update({
+              credits: 0,
+              last_login: now.toISOString()
+            })
+            .eq('id', profile.id)
+            .select()
+            .single();
+            
+          if (error) {
+            console.error('❌ Error fixing credits state:', error);
+            // Return profile with corrected credits locally
+            return { ...profile, credits: 0, last_login: now.toISOString() };
+          }
+          
+          return data;
+        }
       }
     }
 
-    // Just update last login
+    // Just update last login without changing credits
     const { data, error } = await supabase
       .from('user_profiles')
       .update({ last_login: now.toISOString() })
@@ -221,7 +253,9 @@ class AdvancedAuthService {
       .select()
       .single();
 
-    return error ? profile : data;
+    const result = error ? profile : data;
+    console.log('🔄 Final user state:', { credits: result.credits, reset_at: result.credits_reset_at });
+    return result;
   }
 
   private setState(newState: Partial<AuthState>) {
@@ -370,39 +404,106 @@ class AdvancedAuthService {
   }
 
   async useCredit(): Promise<boolean> {
-    if (!this.state.user) return false;
+    console.log('🔥 useCredit called');
+    console.log('Current user:', this.state.user);
+    
+    if (!this.state.user) {
+      console.log('❌ No user found');
+      return false;
+    }
 
-    const user = this.state.user;
-    if (user.credits <= 0) return false;
+    // Get fresh user data from database before using credit
+    console.log('🔄 Getting fresh user data from database...');
+    const { data: freshUser, error: fetchError } = await supabase
+      .from('user_profiles')
+      .select('*')
+      .eq('id', this.state.user.id)
+      .single();
+    
+    if (fetchError || !freshUser) {
+      console.error('❌ Failed to fetch fresh user data:', fetchError);
+      return false;
+    }
+    
+    // Update local state with fresh data
+    this.setState({ user: freshUser });
+    const user = freshUser;
+    
+    console.log('Fresh user credits:', user.credits);
+    console.log('Fresh reset time:', user.credits_reset_at);
+    
+    // Check if user has credits available
+    if (user.credits <= 0) {
+      console.log('❌ No credits available, current credits:', user.credits);
+      return false;
+    }
+    
+    // Check if user is in reset period
+    if (user.credits_reset_at) {
+      const resetTime = new Date(user.credits_reset_at);
+      const now = new Date();
+      if (now < resetTime) {
+        console.log('❌ User is in reset period until:', resetTime);
+        return false;
+      }
+    }
 
     try {
       const newCredits = user.credits - 1;
       const updateData: any = { 
         credits: newCredits,
-        total_credits_used: user.total_credits_used + 1
+        total_credits_used: (user.total_credits_used || 0) + 1
       };
       
-      // If this is the last credit, set reset timer (ChatGPT-like behavior)
+      // If this is the last credit, set reset timer (24-hour reset)
       if (newCredits === 0) {
         updateData.credits_reset_at = new Date(Date.now() + this.CREDIT_RESET_HOURS * 60 * 60 * 1000).toISOString();
       }
 
+      console.log('Updating user profile with:', updateData);
+      console.log('User ID:', user.id);
+      console.log('Table: user_profiles');
+
+      // Try the update with more specific error handling
       const { data, error } = await supabase
         .from('user_profiles')
         .update(updateData)
         .eq('id', user.id)
-        .select()
+        .select('*')
         .single();
 
       if (error) {
-        console.error('Error using credit:', error);
+        console.error('❌ Database error using credit:', error);
+        console.error('Error details:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        });
+        
+        // For now, allow local state update as fallback to unblock users
+        // TODO: Fix database issues and remove this fallback
+        console.log('⚠️ Using local state fallback due to database error');
+        const updatedUser = {
+          ...user,
+          credits: newCredits,
+          total_credits_used: (user.total_credits_used || 0) + 1,
+          ...(newCredits === 0 && { credits_reset_at: updateData.credits_reset_at })
+        };
+        this.setState({ user: updatedUser });
+        return true;
+      }
+      
+      if (!data) {
+        console.error('❌ No data returned from update');
         return false;
       }
       
+      console.log('✅ Credit used successfully, new data:', data);
       this.setState({ user: data });
       return true;
     } catch (error) {
-      console.error('Error using credit:', error);
+      console.error('❌ Exception in useCredit:', error);
       return false;
     }
   }
@@ -495,6 +596,70 @@ class AdvancedAuthService {
   canUseCredit(): boolean {
     const creditsInfo = this.getCreditsInfo();
     return creditsInfo.credits > 0;
+  }
+
+  // Debug method to test database connection
+  async testDatabaseConnection(): Promise<boolean> {
+    try {
+      console.log('🔍 Testing database connection...');
+      
+      if (!this.state.user) {
+        console.log('❌ No user for database test');
+        return false;
+      }
+
+      // Test basic connection
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('id, credits, credits_reset_at, total_credits_used')
+        .eq('id', this.state.user.id)
+        .single();
+
+      if (error) {
+        console.error('❌ Database connection test failed:', error);
+        console.error('Error code:', error.code);
+        console.error('Error message:', error.message);
+        return false;
+      }
+
+      console.log('✅ Database connection test successful:', data);
+      
+      // Test update capability
+      const testUpdate = await supabase
+        .from('user_profiles')
+        .update({ last_login: new Date().toISOString() })
+        .eq('id', this.state.user.id)
+        .select('id')
+        .single();
+        
+      if (testUpdate.error) {
+        console.error('❌ Database update test failed:', testUpdate.error);
+        return false;
+      }
+      
+      console.log('✅ Database update test successful');
+      return true;
+    } catch (error) {
+      console.error('❌ Database connection test exception:', error);
+      return false;
+    }
+  }
+
+  // Method to refresh user profile from database
+  async refreshUserProfile(): Promise<boolean> {
+    try {
+      if (!this.state.user) {
+        console.log('❌ No user to refresh');
+        return false;
+      }
+
+      console.log('🔄 Refreshing user profile from database...');
+      await this.loadUserProfile(this.state.user.id);
+      return true;
+    } catch (error) {
+      console.error('❌ Error refreshing user profile:', error);
+      return false;
+    }
   }
 }
 

@@ -104,6 +104,10 @@ const CoverLetterGenerator: React.FC = () => {
   };
 
   const handleGenerate = async () => {
+    console.log('🔥 Cover Letter Generate button clicked!');
+    console.log('User:', user);
+    console.log('Can use credit:', canUseCredit());
+    
     let finalResumeText = formData.resumeText;
 
     // Extract text from uploaded file if available
@@ -122,10 +126,12 @@ const CoverLetterGenerator: React.FC = () => {
       return;
     }
 
-    // Check credits first
-    if (!canUseCredit()) {
-      const creditsInfo = getCreditsInfo();
-      
+    // Check and use credit
+    const creditsInfo = getCreditsInfo();
+    console.log('Credits info:', creditsInfo);
+    console.log('Credits available:', creditsInfo.credits);
+    
+    if (creditsInfo.credits <= 0) {
       if (creditsInfo.isGuest) {
         if (creditsInfo.timeUntilReset) {
           alert(`❌ Free credit used. Resets in ${creditsInfo.timeUntilReset}. Sign in to get 5 credits!`);
@@ -136,7 +142,7 @@ const CoverLetterGenerator: React.FC = () => {
         if (creditsInfo.timeUntilReset) {
           alert(`❌ No credits remaining. Resets in ${creditsInfo.timeUntilReset}.`);
         } else {
-          alert('❌ No credits remaining. Credits reset 3 hours after exhaustion.');
+          alert('❌ No credits remaining. Credits reset 24 hours after exhaustion.');
         }
       }
       return;
@@ -148,6 +154,8 @@ const CoverLetterGenerator: React.FC = () => {
       alert('❌ Failed to use credit. Please try again.');
       return;
     }
+    
+    console.log('Credit used successfully');
 
     setLoading(true);
     
@@ -550,8 +558,13 @@ What We Offer:
             {/* Generate Button */}
             <div className="flex justify-center pt-6">
               <button
-                onClick={handleGenerate}
-                disabled={loading || (!resumeFile && !formData.resumeText) || !formData.jobDescription || !formData.candidateName}
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  console.log('Cover Letter Generate button clicked!');
+                  handleGenerate();
+                }}
+                disabled={loading}
                 className="px-12 py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-2xl hover:from-indigo-700 hover:to-purple-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed transition-all duration-300 flex items-center space-x-3 shadow-xl hover:shadow-2xl transform hover:scale-105 disabled:transform-none text-lg font-semibold"
               >
                 {loading ? (

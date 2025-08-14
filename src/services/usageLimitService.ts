@@ -108,12 +108,12 @@ class UsageLimitService {
     // Set reset time when user reaches the limit
     let resetTime = null;
     if (newUses >= 5) {
-      resetTime = Date.now() + (1.5 * 60 * 60 * 1000); // 1.5 hours from now
+      resetTime = Date.now() + (24 * 60 * 60 * 1000); // 24 hours from now
       
       // Set timer for automatic reset
       this.resetTimer = setTimeout(() => {
         this.resetUsage();
-      }, 1.5 * 60 * 60 * 1000);
+      }, 24 * 60 * 60 * 1000);
     }
     
     this.saveUsageData(newUses, resetTime);
@@ -162,7 +162,7 @@ class UsageLimitService {
   }
 
   debugSetLimit(): void {
-    const resetTime = Date.now() + (1.5 * 60 * 60 * 1000);
+    const resetTime = Date.now() + (24 * 60 * 60 * 1000);
     this.saveUsageData(5, resetTime);
     this.notifySubscribers();
     console.log('Usage limit set to maximum for debugging');

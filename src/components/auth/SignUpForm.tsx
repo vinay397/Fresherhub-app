@@ -285,7 +285,7 @@ const SignUpForm: React.FC<SignUpFormProps> = ({
               </div>
               <div className="flex items-center justify-center space-x-2 text-green-700">
                 <Clock className="h-3 w-3" />
-                <span>Auto Reset</span>
+                <span>24h Reset</span>
               </div>
             </div>
           </div>
@@ -479,7 +479,7 @@ const SignUpForm: React.FC<SignUpFormProps> = ({
               </div>
               <div className="flex items-center space-x-2 text-sm text-purple-700">
                 <Clock className="h-4 w-4" />
-                <span>Credits reset automatically after use</span>
+                <span>Credits reset every 24 hours</span>
               </div>
             </div>
           </div>

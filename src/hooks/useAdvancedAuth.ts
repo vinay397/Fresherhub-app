@@ -67,6 +67,10 @@ export const useAdvancedAuth = () => {
         return 'Credits exhausted';
       }
       return null;
-    }
+    },
+    
+    // Debug methods
+    testDatabaseConnection: () => advancedAuthService.testDatabaseConnection(),
+    refreshUserProfile: () => advancedAuthService.refreshUserProfile()
   };
 };

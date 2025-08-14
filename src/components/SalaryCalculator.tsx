@@ -116,15 +116,21 @@ const SalaryCalculator: React.FC = () => {
   };
 
   const handleCalculate = async () => {
+    console.log('🔥 Salary Calculator button clicked!');
+    console.log('User:', user);
+    console.log('Can use credit:', canUseCredit());
+    
     if (!formData.jobRole || !formData.location) {
       alert('Please fill in at least the job role and location');
       return;
     }
 
-    // Check credits first
-    if (!canUseCredit()) {
-      const creditsInfo = getCreditsInfo();
-      
+    // Check and use credit
+    const creditsInfo = getCreditsInfo();
+    console.log('Credits info:', creditsInfo);
+    console.log('Credits available:', creditsInfo.credits);
+    
+    if (creditsInfo.credits <= 0) {
       if (creditsInfo.isGuest) {
         if (creditsInfo.timeUntilReset) {
           alert(`❌ Free credit used. Resets in ${creditsInfo.timeUntilReset}. Sign in to get 5 credits!`);
@@ -135,7 +141,7 @@ const SalaryCalculator: React.FC = () => {
         if (creditsInfo.timeUntilReset) {
           alert(`❌ No credits remaining. Resets in ${creditsInfo.timeUntilReset}.`);
         } else {
-          alert('❌ No credits remaining. Credits reset 3 hours after exhaustion.');
+          alert('❌ No credits remaining. Credits reset 24 hours after exhaustion.');
         }
       }
       return;
@@ -147,6 +153,8 @@ const SalaryCalculator: React.FC = () => {
       alert('❌ Failed to use credit. Please try again.');
       return;
     }
+    
+    console.log('Credit used successfully');
 
     setLoading(true);
 
@@ -352,8 +360,13 @@ const SalaryCalculator: React.FC = () => {
 
           <div className="mt-8 flex justify-center">
             <button
-              onClick={handleCalculate}
-              disabled={loading || !formData.jobRole || !formData.location}
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                console.log('Salary Calculator button clicked!');
+                handleCalculate();
+              }}
+              disabled={loading}
               className="px-12 py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-2xl hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed transition-all duration-300 flex items-center space-x-3 shadow-xl hover:shadow-2xl transform hover:scale-105 disabled:transform-none text-lg font-semibold"
             >
               {loading ? (
