@@ -8,17 +8,22 @@ import CoverLetterGenerator from './components/CoverLetterGenerator';
 import SalaryCalculator from './components/SalaryCalculator';
 import Footer from './components/Footer';
 import ResetPasswordPage from './pages/ResetPasswordPage';
+import EmailConfirmationPage from './pages/EmailConfirmationPage';
 
 function App() {
   const [activeTab, setActiveTab] = useState<'home' | 'jobs' | 'ats' | 'cover' | 'salary'>('home');
   const [searchParams, setSearchParams] = useState<{ query?: string; location?: string }>({});
   const { loading, initialized } = useAdvancedAuth();
   const [isResetPasswordPage, setIsResetPasswordPage] = useState(false);
+  const [isEmailConfirmPage, setIsEmailConfirmPage] = useState(false);
 
   useEffect(() => {
     // Check if current URL is reset password page
     const path = window.location.pathname;
+    const hash = window.location.hash;
+    
     setIsResetPasswordPage(path === '/reset-password');
+    setIsEmailConfirmPage(path === '/auth/confirm' || hash.includes('type=signup'));
   }, []);
 
   const handleNavigate = (tab: 'home' | 'jobs' | 'ats' | 'cover' | 'salary', params?: { query?: string; location?: string }) => {
@@ -35,6 +40,10 @@ function App() {
     return <ResetPasswordPage />;
   }
 
+  // Show email confirmation page if URL matches
+  if (isEmailConfirmPage) {
+    return <EmailConfirmationPage />;
+  }
   if (!initialized || loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">

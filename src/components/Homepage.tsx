@@ -28,6 +28,8 @@ const Homepage: React.FC<HomepageProps> = ({ onNavigate }) => {
   const [locationQuery, setLocationQuery] = useState('');
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [guestCreditUsed, setGuestCreditUsed] = useState(false);
+  const [showEmailConfirmedBanner, setShowEmailConfirmedBanner] = useState(false);
+  const [confirmedEmail, setConfirmedEmail] = useState('');
   const { isAuthenticated } = useAuth();
 
   // Check guest credit status on component mount and when returning to homepage
@@ -38,6 +40,20 @@ const Homepage: React.FC<HomepageProps> = ({ onNavigate }) => {
     };
     
     checkGuestCredit();
+    
+    // Check for email confirmation success
+    const emailConfirmed = localStorage.getItem('email_confirmed');
+    const confirmedEmailAddr = localStorage.getItem('confirmed_email');
+    if (emailConfirmed === 'true' && confirmedEmailAddr) {
+      setShowEmailConfirmedBanner(true);
+      setConfirmedEmail(confirmedEmailAddr);
+      // Clear the flags after showing
+      setTimeout(() => {
+        localStorage.removeItem('email_confirmed');
+        localStorage.removeItem('confirmed_email');
+        setShowEmailConfirmedBanner(false);
+      }, 10000); // Show for 10 seconds
+    }
     
     // Check again when window gains focus (user returns to tab)
     const handleFocus = () => checkGuestCredit();
@@ -66,6 +82,38 @@ const Homepage: React.FC<HomepageProps> = ({ onNavigate }) => {
 
   return (
     <div className="min-h-screen bg-white">
+      {/* Email Confirmation Success Banner */}
+      {showEmailConfirmedBanner && (
+        <div className="bg-gradient-to-r from-green-500 to-emerald-500 text-white p-4 relative">
+          <div className="max-w-4xl mx-auto flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-white/20 rounded-full">
+                <CheckCircle className="h-6 w-6" />
+              </div>
+              <div>
+                <h3 className="font-bold text-lg">🎉 Email Verified Successfully!</h3>
+                <p className="text-green-100">
+                  Account <strong>{confirmedEmail}</strong> is now active. Sign in to get your 5 AI credits!
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowAuthModal(true)}
+              className="bg-white text-green-600 px-6 py-2 rounded-lg font-semibold hover:bg-gray-100 transition-colors flex items-center space-x-2"
+            >
+              <LogIn className="h-4 w-4" />
+              <span>Sign In Now</span>
+            </button>
+          </div>
+          <button
+            onClick={() => setShowEmailConfirmedBanner(false)}
+            className="absolute top-2 right-2 p-1 text-white/80 hover:text-white hover:bg-white/20 rounded"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Hero Section */}
       <section className="relative bg-gradient-to-br from-blue-50 via-white to-purple-50 py-20 lg:py-32 overflow-hidden">
         <div className="absolute inset-0 bg-grid-pattern opacity-5"></div>

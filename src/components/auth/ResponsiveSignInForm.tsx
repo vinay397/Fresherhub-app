@@ -11,7 +11,9 @@ import {
   LogIn,
   UserPlus,
   Shield,
-  Zap
+  Zap,
+  Key,
+  RefreshCw
 } from 'lucide-react';
 import { useAdvancedAuth } from '../../hooks/useAdvancedAuth';
 
@@ -98,10 +100,11 @@ const ResponsiveSignInForm: React.FC<SignInFormProps> = ({
       if (result.error) {
         let errorMessage = result.error.message;
         
+        // Enhanced error handling with specific UI messages
         if (errorMessage.includes('Invalid login credentials') || errorMessage.includes('invalid_credentials')) {
           errorMessage = 'Invalid email or password. Please check your credentials and try again.';
         } else if (errorMessage.includes('Email not confirmed')) {
-          errorMessage = 'Please check your email and click the confirmation link before signing in.';
+          errorMessage = 'Please verify your email first. Check your inbox for the verification link.';
         } else if (errorMessage.includes('Too many requests')) {
           errorMessage = 'Too many sign-in attempts. Please wait a few minutes before trying again.';
         } else if (errorMessage.includes('User not found')) {
@@ -110,7 +113,7 @@ const ResponsiveSignInForm: React.FC<SignInFormProps> = ({
         
         setError(errorMessage);
       } else {
-        setSuccess('Welcome back! Redirecting to your dashboard...');
+        setSuccess('Sign in successful! Welcome back to FresherHub.');
         setTimeout(() => {
           onSuccess?.();
         }, 1500);
@@ -144,7 +147,7 @@ const ResponsiveSignInForm: React.FC<SignInFormProps> = ({
         {/* Email Field */}
         <div>
           <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-2">
-            Email address
+            Email address *
           </label>
           <div className="relative">
             <Mail className="absolute left-3 sm:left-4 top-1/2 transform -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 text-gray-400" />
@@ -155,11 +158,16 @@ const ResponsiveSignInForm: React.FC<SignInFormProps> = ({
               className={`w-full pl-10 sm:pl-12 pr-4 py-3 sm:py-4 border-2 rounded-xl text-sm sm:text-base transition-all duration-200 ${
                 fieldErrors.email 
                   ? 'border-red-300 focus:border-red-500 focus:ring-red-200' 
-                  : 'border-gray-200 focus:border-blue-500 focus:ring-blue-200'
+                  : formData.email && !fieldErrors.email
+                    ? 'border-green-300 focus:border-green-500 focus:ring-green-200'
+                    : 'border-gray-200 focus:border-blue-500 focus:ring-blue-200'
               } focus:ring-4 focus:outline-none`}
               placeholder="Enter your email"
               disabled={loading}
             />
+            {formData.email && !fieldErrors.email && (
+              <CheckCircle2 className="absolute right-3 sm:right-4 top-1/2 transform -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 text-green-500" />
+            )}
           </div>
           {fieldErrors.email && (
             <p className="mt-2 text-xs sm:text-sm text-red-600 flex items-center">
@@ -172,7 +180,7 @@ const ResponsiveSignInForm: React.FC<SignInFormProps> = ({
         {/* Password Field */}
         <div>
           <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-2">
-            Password
+            Password *
           </label>
           <div className="relative">
             <Lock className="absolute left-3 sm:left-4 top-1/2 transform -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 text-gray-400" />
@@ -183,7 +191,9 @@ const ResponsiveSignInForm: React.FC<SignInFormProps> = ({
               className={`w-full pl-10 sm:pl-12 pr-10 sm:pr-12 py-3 sm:py-4 border-2 rounded-xl text-sm sm:text-base transition-all duration-200 ${
                 fieldErrors.password 
                   ? 'border-red-300 focus:border-red-500 focus:ring-red-200' 
-                  : 'border-gray-200 focus:border-blue-500 focus:ring-blue-200'
+                  : formData.password && !fieldErrors.password
+                    ? 'border-green-300 focus:border-green-500 focus:ring-green-200'
+                    : 'border-gray-200 focus:border-blue-500 focus:ring-blue-200'
               } focus:ring-4 focus:outline-none`}
               placeholder="Enter your password"
               disabled={loading}
@@ -210,10 +220,11 @@ const ResponsiveSignInForm: React.FC<SignInFormProps> = ({
           <button
             type="button"
             onClick={onSwitchToForgot}
-            className="text-blue-600 hover:text-blue-800 font-medium text-xs sm:text-sm transition-colors"
+            className="text-blue-600 hover:text-blue-800 font-medium text-xs sm:text-sm transition-colors flex items-center space-x-1 ml-auto"
             disabled={loading}
           >
-            Forgot your password?
+            <Key className="h-3 w-3 sm:h-4 sm:w-4" />
+            <span>Forgot your password?</span>
           </button>
         </div>
 
@@ -223,12 +234,38 @@ const ResponsiveSignInForm: React.FC<SignInFormProps> = ({
             <div className="flex items-start">
               <AlertTriangle className="h-4 w-4 sm:h-5 sm:w-5 text-red-500 mt-0.5 mr-3 flex-shrink-0" />
               <div className="min-w-0">
-                <h4 className="text-red-800 font-semibold text-xs sm:text-sm">Sign in failed</h4>
+                <h4 className="text-red-800 font-semibold text-xs sm:text-sm">Invalid Credentials</h4>
                 <p className="text-red-700 text-xs sm:text-sm mt-1 break-words">{error}</p>
-                {error.includes('confirmation') && (
-                  <div className="mt-3 p-3 bg-white rounded-lg border border-red-200">
-                    <p className="text-red-800 text-xs font-medium">📧 Email not confirmed?</p>
-                    <p className="text-red-700 text-xs">Check your inbox and click the confirmation link first.</p>
+                
+                {/* Helpful Actions for Different Error Types */}
+                {error.includes('Invalid email or password') && (
+                  <div className="mt-3 space-y-2">
+                    <button
+                      onClick={onSwitchToForgot}
+                      className="w-full bg-white hover:bg-gray-50 text-red-700 py-2 rounded-lg font-medium transition-colors flex items-center justify-center space-x-2 border border-red-200 hover:border-red-300 text-xs sm:text-sm"
+                    >
+                      <Key className="h-3 w-3 sm:h-4 sm:w-4" />
+                      <span>Reset Password</span>
+                    </button>
+                  </div>
+                )}
+                
+                {error.includes('No account found') && (
+                  <div className="mt-3">
+                    <button
+                      onClick={onSwitchToSignup}
+                      className="w-full bg-white hover:bg-gray-50 text-red-700 py-2 rounded-lg font-medium transition-colors flex items-center justify-center space-x-2 border border-red-200 hover:border-red-300 text-xs sm:text-sm"
+                    >
+                      <UserPlus className="h-3 w-3 sm:h-4 sm:w-4" />
+                      <span>Create Account</span>
+                    </button>
+                  </div>
+                )}
+                
+                {error.includes('verify your email') && (
+                  <div className="mt-3 p-2 bg-white rounded border border-red-300">
+                    <p className="text-red-800 text-xs font-medium">📧 Email not verified?</p>
+                    <p className="text-red-700 text-xs">Check your inbox and click the verification link first.</p>
                   </div>
                 )}
               </div>
@@ -296,6 +333,10 @@ const ResponsiveSignInForm: React.FC<SignInFormProps> = ({
           <div className="flex items-center space-x-2 text-purple-700">
             <Shield className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
             <span>Secure & Private</span>
+          </div>
+          <div className="flex items-center space-x-2 text-green-700">
+            <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
+            <span>24h Reset</span>
           </div>
         </div>
       </div>

@@ -133,22 +133,23 @@ class AdvancedAuthService {
   }
 
   private async createUserProfile(authUser: any): Promise<User> {
-    const now = new Date().toISOString();
+    const now = new Date();
+    const resetTime = new Date(now.getTime() + this.CREDIT_RESET_HOURS * 60 * 60 * 1000);
 
     const profile = {
       id: authUser.id,
       email: authUser.email || '',
       name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || (authUser.email ? authUser.email.split('@')[0] : 'User'),
       avatar_url: authUser.user_metadata?.avatar_url || null,
-      credits: this.FREE_CREDITS,
-      credits_reset_at: null,
-      created_at: now,
-      last_login: now,
+      credits: this.FREE_CREDITS, // Always start with 5 credits
+      credits_reset_at: resetTime.toISOString(), // Set 24-hour reset timer immediately
+      created_at: now.toISOString(),
+      last_login: now.toISOString(),
       profile_completed: false,
       subscription_type: 'free' as const,
       email_confirmed: !!authUser.email_confirmed_at,
       total_credits_used: 0,
-      last_credit_reset: null
+      last_credit_reset: now.toISOString()
     };
 
     try {
@@ -168,7 +169,7 @@ class AdvancedAuthService {
             .single();
           
           if (existingProfile) {
-            return existingProfile;
+            return await this.checkAndResetCredits(existingProfile);
           }
         }
         throw error;
@@ -183,11 +184,11 @@ class AdvancedAuthService {
 
   private async checkAndResetCredits(profile: User): Promise<User> {
     const now = new Date();
-    console.log('🔍 Checking credits for user:', profile.id);
+    console.log('🔍 Checking credits for user:', profile.email);
     console.log('Current credits:', profile.credits);
     console.log('Reset time:', profile.credits_reset_at);
     
-    // Check if there's a reset timer and if it has expired
+    // Always check if 24 hours have passed since last reset
     if (profile.credits_reset_at) {
       const resetTime = new Date(profile.credits_reset_at);
       console.log('Reset time parsed:', resetTime);
@@ -195,15 +196,17 @@ class AdvancedAuthService {
       console.log('Time until reset (ms):', resetTime.getTime() - now.getTime());
       
       if (now >= resetTime) {
-        // Reset timer has expired, restore credits
+        // 24 hours have passed, reset credits to full amount
         const maxCredits = profile.subscription_type === 'premium' ? this.PREMIUM_CREDITS : this.FREE_CREDITS;
-        console.log('✅ Reset timer expired, restoring credits to:', maxCredits);
+        const nextResetTime = new Date(now.getTime() + this.CREDIT_RESET_HOURS * 60 * 60 * 1000);
+        
+        console.log('✅ 24 hours passed, resetting credits to:', maxCredits);
         
         const { data, error } = await supabase
           .from('user_profiles')
           .update({
             credits: maxCredits,
-            credits_reset_at: null,
+            credits_reset_at: nextResetTime.toISOString(), // Set next 24-hour reset
             last_credit_reset: now.toISOString(),
             last_login: now.toISOString()
           })
@@ -218,34 +221,30 @@ class AdvancedAuthService {
 
         console.log('✅ Credits reset successfully:', data);
         return data;
-      } else {
-        // Reset timer is still active, user should have 0 credits
-        console.log('⏰ Reset timer still active, enforcing 0 credits');
-        if (profile.credits > 0) {
-          // Fix inconsistent state - user shouldn't have credits during reset period
-          console.log('🔧 Fixing inconsistent state - setting credits to 0');
-          const { data, error } = await supabase
-            .from('user_profiles')
-            .update({
-              credits: 0,
-              last_login: now.toISOString()
-            })
-            .eq('id', profile.id)
-            .select()
-            .single();
-            
-          if (error) {
-            console.error('❌ Error fixing credits state:', error);
-            // Return profile with corrected credits locally
-            return { ...profile, credits: 0, last_login: now.toISOString() };
-          }
-          
-          return data;
-        }
       }
+    } else {
+      // No reset time set, set it now (for existing users)
+      const nextResetTime = new Date(now.getTime() + this.CREDIT_RESET_HOURS * 60 * 60 * 1000);
+      
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .update({
+          credits_reset_at: nextResetTime.toISOString(),
+          last_login: now.toISOString()
+        })
+        .eq('id', profile.id)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('❌ Error setting reset time:', error);
+        return profile;
+      }
+
+      return data;
     }
 
-    // Just update last login without changing credits
+    // Just update last login
     const { data, error } = await supabase
       .from('user_profiles')
       .update({ last_login: now.toISOString() })
@@ -261,6 +260,30 @@ class AdvancedAuthService {
   private setState(newState: Partial<AuthState>) {
     this.state = { ...this.state, ...newState };
     this.listeners.forEach(listener => listener(this.state));
+  }
+
+  // Check if email exists in database before signup
+  async checkEmailExists(email: string): Promise<{ exists: boolean; error?: any }> {
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('email')
+        .eq('email', email.toLowerCase().trim())
+        .single();
+      
+      if (error && error.code === 'PGRST116') {
+        // Email not found
+        return { exists: false };
+      }
+      
+      if (error) {
+        return { exists: false, error };
+      }
+      
+      return { exists: true };
+    } catch (error) {
+      return { exists: false, error };
+    }
   }
 
   // Public methods
@@ -317,13 +340,8 @@ class AdvancedAuthService {
       this.setState({ ...this.state, loading: true });
       
       // First check if email already exists in our database
-      const { data: existingUser, error: checkError } = await supabase
-        .from('user_profiles')
-        .select('email')
-        .eq('email', email.toLowerCase().trim())
-        .single();
-      
-      if (existingUser) {
+      const emailCheck = await this.checkEmailExists(email);
+      if (emailCheck.exists) {
         this.setState({ ...this.state, loading: false });
         return { 
           data: null, 
@@ -379,6 +397,12 @@ class AdvancedAuthService {
 
   async resetPassword(email: string) {
     try {
+      // First check if email exists
+      const emailCheck = await this.checkEmailExists(email);
+      if (!emailCheck.exists) {
+        return { error: { message: 'No account found with this email. Please sign up first.' } };
+      }
+
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${window.location.origin}/reset-password`
       });
@@ -425,73 +449,37 @@ class AdvancedAuthService {
       return false;
     }
     
-    // Update local state with fresh data
-    this.setState({ user: freshUser });
-    const user = freshUser;
+    // Check if credits need to be reset first
+    const updatedUser = await this.checkAndResetCredits(freshUser);
+    this.setState({ user: updatedUser });
     
-    console.log('Fresh user credits:', user.credits);
-    console.log('Fresh reset time:', user.credits_reset_at);
+    console.log('Fresh user credits:', updatedUser.credits);
     
     // Check if user has credits available
-    if (user.credits <= 0) {
-      console.log('❌ No credits available, current credits:', user.credits);
+    if (updatedUser.credits <= 0) {
+      console.log('❌ No credits available, current credits:', updatedUser.credits);
       return false;
-    }
-    
-    // Check if user is in reset period
-    if (user.credits_reset_at) {
-      const resetTime = new Date(user.credits_reset_at);
-      const now = new Date();
-      if (now < resetTime) {
-        console.log('❌ User is in reset period until:', resetTime);
-        return false;
-      }
     }
 
     try {
-      const newCredits = user.credits - 1;
+      const newCredits = updatedUser.credits - 1;
       const updateData: any = { 
         credits: newCredits,
-        total_credits_used: (user.total_credits_used || 0) + 1
+        total_credits_used: (updatedUser.total_credits_used || 0) + 1
       };
-      
-      // If this is the last credit, set reset timer (24-hour reset)
-      if (newCredits === 0) {
-        updateData.credits_reset_at = new Date(Date.now() + this.CREDIT_RESET_HOURS * 60 * 60 * 1000).toISOString();
-      }
 
       console.log('Updating user profile with:', updateData);
-      console.log('User ID:', user.id);
-      console.log('Table: user_profiles');
 
-      // Try the update with more specific error handling
       const { data, error } = await supabase
         .from('user_profiles')
         .update(updateData)
-        .eq('id', user.id)
+        .eq('id', updatedUser.id)
         .select('*')
         .single();
 
       if (error) {
         console.error('❌ Database error using credit:', error);
-        console.error('Error details:', {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint
-        });
-        
-        // For now, allow local state update as fallback to unblock users
-        // TODO: Fix database issues and remove this fallback
-        console.log('⚠️ Using local state fallback due to database error');
-        const updatedUser = {
-          ...user,
-          credits: newCredits,
-          total_credits_used: (user.total_credits_used || 0) + 1,
-          ...(newCredits === 0 && { credits_reset_at: updateData.credits_reset_at })
-        };
-        this.setState({ user: updatedUser });
-        return true;
+        return false;
       }
       
       if (!data) {
@@ -508,7 +496,7 @@ class AdvancedAuthService {
     }
   }
 
-  // Guest credit system
+  // Guest credit system (1 credit per device)
   getGuestCredits(): number {
     const lastUsed = localStorage.getItem(this.GUEST_CREDIT_KEY);
     if (!lastUsed) return 1;
@@ -608,7 +596,6 @@ class AdvancedAuthService {
         return false;
       }
 
-      // Test basic connection
       const { data, error } = await supabase
         .from('user_profiles')
         .select('id, credits, credits_reset_at, total_credits_used')
@@ -617,27 +604,10 @@ class AdvancedAuthService {
 
       if (error) {
         console.error('❌ Database connection test failed:', error);
-        console.error('Error code:', error.code);
-        console.error('Error message:', error.message);
         return false;
       }
 
       console.log('✅ Database connection test successful:', data);
-      
-      // Test update capability
-      const testUpdate = await supabase
-        .from('user_profiles')
-        .update({ last_login: new Date().toISOString() })
-        .eq('id', this.state.user.id)
-        .select('id')
-        .single();
-        
-      if (testUpdate.error) {
-        console.error('❌ Database update test failed:', testUpdate.error);
-        return false;
-      }
-      
-      console.log('✅ Database update test successful');
       return true;
     } catch (error) {
       console.error('❌ Database connection test exception:', error);
@@ -645,7 +615,6 @@ class AdvancedAuthService {
     }
   }
 
-  // Method to refresh user profile from database
   async refreshUserProfile(): Promise<boolean> {
     try {
       if (!this.state.user) {
