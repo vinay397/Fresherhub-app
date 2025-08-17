@@ -58,6 +58,11 @@ const AuthContainer: React.FC<AuthContainerProps> = ({
     onClose();
   };
 
+  const handleSignupSuccess = () => {
+    // For signup, don't close modal immediately - show email verification message
+    // The signup form will handle the flow
+  };
+
   if (!isOpen) return null;
 
   const WelcomeScreen = () => (
@@ -193,7 +198,7 @@ const AuthContainer: React.FC<AuthContainerProps> = ({
           {currentMode === 'signup' && (
             <ResponsiveSignUpForm
               onBack={() => handleModeChange('welcome')}
-              onSuccess={handleSuccess}
+              onSuccess={handleSignupSuccess}
               onSwitchToSignin={() => handleModeChange('signin')}
             />
           )}
